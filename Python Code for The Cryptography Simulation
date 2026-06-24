@@ -1,0 +1,108 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import zipfile
+import os
+
+# ==========================================
+# 1. Cryptographic Setup (Keys and Domain)
+# ==========================================
+N = 1000
+x = np.linspace(-1, 1, N)
+interfaces = [-0.4, 0.4]
+
+# Alice's Plaintext: A highly structured multivector signal
+u1_plain = np.sin(4 * np.pi * x) * np.cos(2 * np.pi * x)
+u2_plain = np.exp(-2 * x**2) * np.sin(5 * np.pi * x)
+plaintext = np.vstack((u1_plain, u2_plain))
+
+# Private Keys (Rotors)
+theta1 = np.pi / 2.7   # Cryptographic Rotor 1
+theta2 = -np.pi / 1.5  # Cryptographic Rotor 2
+
+def apply_rotor(vector, theta):
+    """Clifford R * U * R_rev mapped to 2D rotation matrix"""
+    R = np.array([[np.cos(theta), -np.sin(theta)],
+                  [np.sin(theta),  np.cos(theta)]])
+    return R @ vector
+
+# Physical One-Time Pad (Stochastic Boundary Residuals)
+np.random.seed(99)
+N_gamma1 = np.random.normal(0, 0.6, (2, 1))
+N_gamma2 = np.random.normal(0, 0.4, (2, 1))
+
+# ==========================================
+# 2. Algorithm 1: Hardware Encryption
+# ==========================================
+ciphertext = np.copy(plaintext)
+
+# Pass Interface 1
+for i in range(N):
+    if x[i] >= interfaces[0]:
+        ciphertext[:, i] = (apply_rotor(ciphertext[:, i].reshape(2,1), theta1) + N_gamma1).flatten()
+
+# Pass Interface 2
+for i in range(N):
+    if x[i] >= interfaces[1]:
+        ciphertext[:, i] = (apply_rotor(ciphertext[:, i].reshape(2,1), theta2) + N_gamma2).flatten()
+
+# ==========================================
+# 3. Algorithm 2: Hardware Decryption
+# ==========================================
+decrypted = np.copy(ciphertext)
+
+# Reverse Interface 2
+for i in range(N):
+    if x[i] >= interfaces[1]:
+        temp = decrypted[:, i].reshape(2,1) - N_gamma2
+        decrypted[:, i] = apply_rotor(temp, -theta2).flatten()
+
+# Reverse Interface 1
+for i in range(N):
+    if x[i] >= interfaces[0]:
+        temp = decrypted[:, i].reshape(2,1) - N_gamma1
+        decrypted[:, i] = apply_rotor(temp, -theta1).flatten()
+
+# ==========================================
+# 4. Cryptographic Visualization & Export
+# ==========================================
+plt.rcParams.update({'font.size': 12, 'font.family': 'serif'})
+fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+
+signals = [plaintext, ciphertext, decrypted]
+titles = ['1. Plaintext Signal (Alice)', 
+          '2. Ciphertext (Eavesdropper View)', 
+          '3. Decrypted Signal (Bob)']
+colors = [('#3b82f6', '#ef4444'), ('#64748b', '#94a3b8'), ('#3b82f6', '#ef4444')]
+
+for ax, sig, title, color in zip(axs, signals, titles, colors):
+    ax.plot(x, sig[0, :], label='$e_1$ channel', color=color[0], linewidth=2)
+    ax.plot(x, sig[1, :], label='$e_2$ channel', color=color[1], linewidth=2)
+    
+    ax.axvline(interfaces[0], color='black', linestyle=':')
+    ax.axvline(interfaces[1], color='black', linestyle=':')
+    ax.set_title(title, fontweight='bold')
+    ax.set_ylabel('Amplitude')
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+
+axs[2].set_xlabel('Spatial Hardware Domain $x$')
+plt.tight_layout()
+
+# Save and Zip
+pdf_filename = 'stratified_crypto_simulation.pdf'
+plt.savefig(pdf_filename, dpi=300, bbox_inches='tight')
+plt.close()
+
+zip_filename = 'crypto_simulation.zip'
+with zipfile.ZipFile(zip_filename, 'w') as zipf:
+    if os.path.exists(pdf_filename):
+        zipf.write(pdf_filename)
+
+try:
+    from google.colab import files
+    files.download(zip_filename)
+except ImportError:
+    pass
+
+# Verification
+print(f"Max Cryptographic Decryption Error: {np.max(np.abs(plaintext - decrypted)):.2e}")
