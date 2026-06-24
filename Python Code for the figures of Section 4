@@ -1,0 +1,145 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import zipfile
+import os
+
+# ==========================================
+# 1. Setup Domain and Hardware Interfaces
+# ==========================================
+N = 1000
+x = np.linspace(-1, 1, N)
+alpha = 0.4  # Hardware boundaries at -0.4 and 0.4
+
+# Simulate an incoming deterministic structural signal 
+# U(x) = u1(x)e1 + u2(x)e2
+u1_orig = np.sin(3 * np.pi * x) * np.exp(-x**2)
+u2_orig = np.cos(5 * np.pi * x) * np.exp(-x**2)
+signal_orig = np.vstack((u1_orig, u2_orig))
+
+# ==========================================
+# 2. Define Cryptographic Rotors & Noise
+# ==========================================
+# Interface projection angles (Cryptographic Keys)
+theta1 = np.pi / 4    # 45 degree rotor at x = -alpha
+theta2 = -np.pi / 3   # -60 degree rotor at x = alpha
+
+def apply_rotor(vector_signal, theta):
+    """
+    Simulates the Clifford transformation R * U * R_reverse.
+    In Cl(2,0) vector space, this algebraically reduces to a 2D rotation.
+    """
+    R_matrix = np.array([
+        [np.cos(theta), -np.sin(theta)],
+        [np.sin(theta),  np.cos(theta)]
+    ])
+    return R_matrix @ vector_signal
+
+# Simulate hardware stochastic noise trapped at the boundaries
+np.random.seed(42)
+noise_residual_1 = np.random.normal(0, 0.3, (2, 1)) # Noise at Interface 1
+noise_residual_2 = np.random.normal(0, 0.5, (2, 1)) # Noise at Interface 2
+
+# ==========================================
+# 3. Forward Pass (Encoding & Morphological Scrambling)
+# ==========================================
+signal_fwd = np.zeros_like(signal_orig)
+
+for i in range(N):
+    xi = x[i]
+    if xi < -alpha:
+        # Blue Region: Unaltered signal
+        signal_fwd[:, i] = signal_orig[:, i]
+    
+    elif xi >= -alpha and xi <= alpha:
+        # Green Region: Passed first interface
+        transformed = apply_rotor(signal_orig[:, i].reshape(2, 1), theta1)
+        signal_fwd[:, i] = (transformed + noise_residual_1).flatten()
+    
+    else:
+        # Red Region: Passed second interface
+        temp = apply_rotor(signal_orig[:, i].reshape(2, 1), theta1) + noise_residual_1
+        transformed = apply_rotor(temp, theta2)
+        signal_fwd[:, i] = (transformed + noise_residual_2).flatten()
+
+# ==========================================
+# 4. Inverse Pass (Perfect Reconstruction)
+# ==========================================
+signal_inv = np.zeros_like(signal_fwd)
+
+for i in range(N):
+    xi = x[i]
+    if xi < -alpha:
+        # Blue Region
+        signal_inv[:, i] = signal_fwd[:, i]
+        
+    elif xi >= -alpha and xi <= alpha:
+        # Green Region: Apply reverse rotor (-theta1)
+        temp = signal_fwd[:, i].reshape(2, 1) - noise_residual_1
+        signal_inv[:, i] = apply_rotor(temp, -theta1).flatten()
+        
+    else:
+        # Red Region: Reverse Interface 2, then Reverse Interface 1
+        temp = signal_fwd[:, i].reshape(2, 1) - noise_residual_2
+        temp = apply_rotor(temp, -theta2)
+        
+        temp = temp - noise_residual_1
+        signal_inv[:, i] = apply_rotor(temp, -theta1).flatten()
+
+# ==========================================
+# 5. Visualization & Export
+# ==========================================
+plt.rcParams.update({'font.size': 12, 'font.family': 'serif'})
+fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+titles = ['1. Original Multivector Signal $U(x)$', 
+          '2. Forward Transform: Hardware Scrambling', 
+          '3. Inverse Transform: Exact Reconstruction']
+
+signals = [signal_orig, signal_fwd, signal_inv]
+
+for ax, title, sig in zip(axs, titles, signals):
+    ax.plot(x, sig[0, :], label='$u_1$ component ($e_1$)', color='#f97316', linewidth=2)
+    ax.plot(x, sig[1, :], label='$u_2$ component ($e_2$)', color='#8b5cf6', linewidth=2)
+    
+    # Backgrounds and Interfaces
+    ax.axvspan(-1, -alpha, color='#3b82f6', alpha=0.1) # Blue
+    ax.axvspan(-alpha, alpha, color='#22c55e', alpha=0.1) # Green
+    ax.axvspan(alpha, 1, color='#ef4444', alpha=0.1) # Red
+    ax.axvline(-alpha, color='black', linestyle='--')
+    ax.axvline(alpha, color='black', linestyle='--')
+    
+    ax.set_title(title, fontweight='bold')
+    ax.set_ylabel('Intensity')
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+
+axs[2].set_xlabel('Spatial Hardware Domain $x$')
+plt.tight_layout()
+
+# Save the figure as a PDF
+pdf_filename = 'icmt_hardware_simulation.pdf'
+plt.savefig(pdf_filename, dpi=300, bbox_inches='tight')
+print(f"Saved visualization as '{pdf_filename}'")
+plt.close()
+
+# Verification Check
+error = np.max(np.abs(signal_orig - signal_inv))
+print(f"Maximum absolute reconstruction error: {error:.2e}")
+if error < 1e-10:
+    print("SUCCESS: The Invertible Clifford-Morphological Transform is mathematically lossless.\n")
+
+# ==========================================
+# 6. Zip and Download for Colab
+# ==========================================
+zip_filename = 'icmt_simulation_results.zip'
+print(f"Packaging files into {zip_filename}...")
+
+with zipfile.ZipFile(zip_filename, 'w') as zipf:
+    if os.path.exists(pdf_filename):
+        zipf.write(pdf_filename)
+
+try:
+    from google.colab import files
+    print("Google Colab environment detected. Initiating download...")
+    files.download(zip_filename)
+except ImportError:
+    print(f"Note: Archive '{zip_filename}' saved locally in your current directory.")
